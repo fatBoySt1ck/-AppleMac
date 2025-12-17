@@ -489,6 +489,17 @@ AddField(win, x, y, labelTxt, editW, targetMap, key, initVal) {
     return x + ew + 16
 }
 
+AddSectionHeader(win, text, x, y) {
+    win.SetFont("s11 Bold", "Segoe UI")
+    ctrl := win.Add("Text", "x" x " y" y " c0x1E6FBF", text)
+    win.SetFont("s10", "Segoe UI")
+    return ctrl
+}
+
+AddSectionHint(win, text, x, y, w := 760) {
+    return win.Add("Text", "x" x " y" y " w" w " c0x56606B +0x200", text)
+}
+
 global _hkBound := Map()
 NormalizeHotkey(hk) => Trim(hk)
 UnregisterHotkey(name) {
@@ -534,12 +545,19 @@ BuildGui(cfg) {
     g := Map()
     win := Gui("+AlwaysOnTop +Resize +MinSize820x600", "Roblox Macro · Clean UI")
     win.MarginX := 10, win.MarginY := 8
+    win.BackColor := "0xF7F9FB"
+    win.SetFont("s10", "Segoe UI")
 
-    tabs := win.Add("Tab3", "w790 h500", ["General", "Eggsterminator", "Options", "Overlay"])
+    header := win.Add("Text", "xm ym w790 c0x1E6FBF +0x200 Center", "Roblox Macro Control Panel")
+    win.Add("Text", "xm y+4 w790 c0x56606B Center", "Tune servers, automation timing, and overlay visibility without touching the script.")
+
+    tabs := win.Add("Tab3", "xm y+10 w790 h500", ["General", "Eggsterminator", "Options", "Overlay"])
 
     tabs.UseTab("General")
-    win.Add("GroupBox", "x10 y28 w770 h210", "Game & Server")
-    x := 24, y := 50
+    AddSectionHeader(win, "Game & Server", 18, 44)
+    AddSectionHint(win, "Pick a private server link, then save it for later. The dropdown always reflects your saved presets.", 24, 64)
+    win.Add("GroupBox", "x10 y84 w770 h224", "Game & Server")
+    x := 24, y := 106
     nx := AddField(win, x, y, "Private Server Link:", 580, g, "link", cfg["privateServerLink"])
     g["serverDD"] := win.Add("DropDownList", "x24 y" (y+26) " w628")
     _DD_InitAndChoose(g["serverDD"], LoadServerPresets(), cfg["privateServerLink"])
@@ -549,47 +567,56 @@ BuildGui(cfg) {
     g["btnServerSave"].OnEvent("Click", (*) => SaveServerPreset(g["link"].Value))
     g["btnServerDel"].OnEvent("Click", (*) => RemoveServerPreset(g["serverDD"].Text))
 
-    y := 120, x := 24
+    y := 180, x := 24
     nx := AddField(win, x, y, "Roblox EXE:", 240, g, "roblox", cfg["robloxExe"])
     nx := AddField(win, nx, y, "Browser EXE:", 240, g, "browser", cfg["browserExe"])
     g["browserDD"] := win.Add("DropDownList", "x" (nx-240) " y" (y+26) " w240")
     _DD_InitAndChoose(g["browserDD"], GetBrowserPresets(), cfg["browserExe"])
     g["browserDD"].OnEvent("Change", (*) => ( g["browser"].Value := g["browserDD"].Text ))
 
-    y := 180
+    y := 240
+    AddSectionHeader(win, "Rejoin cadence", 18, y)
+    AddSectionHint(win, "Control how often the macro refreshes your Roblox session and how long it waits around transitions.", 24, y+18)
+    y += 46, x := 24
     nx := AddField(win, x, y, "Interval (min):", 60, g, "rejoinMin", cfg["rejoinIntervalMin"])
     nx := AddField(win, nx, y, "Detect Timeout (s):", 60, g, "detectTimeout", cfg["detectTimeoutSec"])
 
-    y += 30, x := 24
+    y += 32, x := 24
     nx := AddField(win, x, y, "Pre-Relaunch (s):", 60, g, "preRelaunch", cfg["preRelaunchSec"])
     nx := AddField(win, nx, y, "Post Link Wait (s):", 60, g, "postLinkWait", cfg["postLinkWaitSec"])
     nx := AddField(win, nx, y, "Browser Grace (s):", 60, g, "browserGrace", cfg["browserGraceSec"])
 
-    y += 32
+    y += 34
     g["autoRejoinEnabled"] := win.Add("CheckBox", "x24 y" y, "Enable Auto Rejoin")
     g["autoRejoinEnabled"].Value := cfg["autoRejoinEnabled"]
     btnRG := win.Add("Button", "x+8 yp-4 w140", "Reset General")
     btnRG.OnEvent("Click", (*) => ResetTabDefaults("General"))
 
     tabs.UseTab("Eggsterminator")
-    x := 24, y := 50
+    AddSectionHeader(win, "Timing", 24, 44)
+    AddSectionHint(win, "Tune delays to line up with your Roblox loading time and loop pacing.", 30, 64)
+    x := 24, y := 96
     nx := AddField(win, x, y, "Start Delay (s):", 60, g, "m1_startDelay",    cfg["m1_startDelaySec"])
     nx := AddField(win, nx, y, "Tick (ms):",       60, g, "m1_tick",          cfg["m1_tickMs"])
     nx := AddField(win, nx, y, "Move Time (s):",   60, g, "m1_moveDuration",  cfg["m1_moveDurationSec"])
     nx := AddField(win, nx, y, "Loop Wait (s):",   60, g, "m1_loopWait",      cfg["m1_loopWaitSec"])
 
-    y += 30
+    y += 32
     nx := AddField(win, x,  y, "Esc Pause (s):",   60, g, "m1_pause1",        cfg["m1_pause1Sec"])
     nx := AddField(win, nx, y, "'Reset' Pause (s):",60, g, "m1_pause2",       cfg["m1_pause2Sec"])
 
-    y += 30
+    y += 32
+    AddSectionHeader(win, "Path", 24, y)
+    y += 24
     nx := AddField(win, x,  y, "LeftX:",           70, g, "m1_LeftX",         cfg["m1_LeftX"])
     nx := AddField(win, nx, y, "RightX:",          70, g, "m1_RightX",        cfg["m1_RightX"])
     nx := AddField(win, nx, y, "CenterY:",         70, g, "m1_CenterY",       cfg["m1_CenterY"])
     nx := AddField(win, nx, y, "Amplitude:",       70, g, "m1_Amplitude",     cfg["m1_Amplitude"])
     nx := AddField(win, nx, y, "Speed:",           70, g, "m1_Speed",         cfg["m1_Speed"])
 
-    y += 30, x := 24
+    y += 32, x := 24
+    AddSectionHeader(win, "Visual helpers", 24, y)
+    y += 26
     g["m1_showBox"] := win.Add("CheckBox", "x" x " y" y, "Show movement area box")
     g["m1_showBox"].Value := cfg["m1_showBox"]
     nx := AddField(win, x+220, y, "Box thickness:", 60, g, "m1_boxThickness", cfg["m1_boxThickness"])
@@ -606,9 +633,10 @@ BuildGui(cfg) {
     nx := AddField(win, x, y, "Cursor dot color:", 100, g, "m1_cursorDotColor", cfg["m1_cursorDotColor"])
     nx := AddField(win, nx, y, "Cursor dot size:", 80, g, "m1_cursorDotSize",  cfg["m1_cursorDotSize"])
 
-    y += 26, x := 24
-    win.Add("Text", "x" x " y" y " cGray", "Prep Keys")
-    y += 18
+    y += 32, x := 24
+    AddSectionHeader(win, "Prep Keys", 24, y)
+    AddSectionHint(win, "Keys pressed before the loop starts to prep your Roblox session.", 30, y+18)
+    y += 42
     nx := AddField(win, x,  y, "Key1:",            80, g, "m1_key1",          cfg["m1_key1"])
     nx := AddField(win, nx, y, "Key1 hold (ms):",  80, g, "m1_key1HoldMs",    cfg["m1_key1HoldMs"])
     nx := AddField(win, nx, y, "Key2:",            80, g, "m1_key2",          cfg["m1_key2"])
@@ -617,63 +645,65 @@ BuildGui(cfg) {
     nx := AddField(win, nx, y, "Post-Key2 delay (ms):", 100, g, "m1_postKey2DelayMs", cfg["m1_postKey2DelayMs"])
     nx := AddField(win, nx, y, "After-prep key:",  80, g, "m1_afterPrepKey",  cfg["m1_afterPrepKey"])
 
-    y += 24, x := 24
-    win.Add("Text", "x" x " y" y " cGray", "Confirm Keys")
-    y += 18
+    y += 32, x := 24
+    AddSectionHeader(win, "Confirm Keys", 24, y)
+    y += 24
     nx := AddField(win, x,  y, "Esc key:",         80, g, "m1_keyEsc",        cfg["m1_keyEsc"])
     nx := AddField(win, nx, y, "Reset key:",       80, g, "m1_keyReset",      cfg["m1_keyReset"])
     nx := AddField(win, nx, y, "Enter key:",       80, g, "m1_keyEnter",      cfg["m1_keyEnter"])
 
-    y += 12
+    y += 18
     btnRM1 := win.Add("Button", "x24 y" y " w180", "Reset Eggsterminator")
     btnRM1.OnEvent("Click", (*) => ResetTabDefaults("Eggsterminator"))
 
     tabs.UseTab("Options")
-    g["showCountdownTip"] := win.Add("CheckBox","x24 y50","Show countdown tooltip")
+    AddSectionHeader(win, "Hotkeys & config", 24, 44)
+    AddSectionHint(win, "Update binds then click Apply Hotkeys to push them live right away.", 30, 64)
+    g["showCountdownTip"] := win.Add("CheckBox","x24 y96","Show countdown tooltip")
     g["showCountdownTip"].Value := cfg["showCountdownTip"]
 
-    y := 84
-    win.Add("Text", "x24 y" y " Section", "Hotkeys")
-    y += 22
+    y := 126
     g["hk_m1"] := win.Add("Edit", "x24 y" y " w120", cfg["hk_m1"]),       win.Add("Text", "x+6 yp+3", "Egg (start/stop)")
     y += 28
     g["hk_rejoin"] := win.Add("Edit", "x24 y" y " w120", cfg["hk_rejoin"]), win.Add("Text", "x+6 yp+3", "Rejoin")
     y += 28
     g["hk_overlay"] := win.Add("Edit", "x24 y" y " w120", cfg["hk_overlay"]), win.Add("Text", "x+6 yp+3", "Toggle overlay")
 
-    y += 32
+    y += 36
     btnApplyHK := win.Add("Button", "x24 y" y " w160", "Apply Hotkeys Now")
     btnImport  := win.Add("Button", "x+12 yp w160", "Import Config…")
     btnApplyHK.OnEvent("Click", (*) => ( SyncFromGui(), SaveSettings(), ApplyHotkeys(), ToolTip("Hotkeys applied"), SetTimer(() => ToolTip(), -700) ))
     btnImport.OnEvent("Click", (*) => ImportConfig())
-    y += 36
+    y += 38
     btnRO := win.Add("Button", "x24 y" y " w160", "Reset Options")
     btnRO.OnEvent("Click", (*) => ResetTabDefaults("Options"))
 
     tabs.UseTab("Overlay")
-    x := 24, y := 48
+    AddSectionHeader(win, "Overlay sizing", 24, 44)
+    AddSectionHint(win, "Change text size, padding, and background to make the on-screen overlay readable on your monitor.", 30, 64)
+    x := 24, y := 96
     g["ov_enabled"] := win.Add("CheckBox", "x" x " y" y, "Enable overlay")
     g["ov_enabled"].Value := overlayEnabled ? 1 : 0
 
-    y += 26
+    y += 28
     nx := AddField(win, x, y, "Font size:", 60, g, "ov_fontSize", overlayFontSize)
     nx := AddField(win, nx, y, "Width:", 60, g, "ov_width", overlayW)
     nx := AddField(win, nx, y, "Height:", 60, g, "ov_height", overlayH)
 
-    y += 26
+    y += 28
     nx := AddField(win, x, y, "Padding (px):", 60, g, "ov_padding", overlayPadding)
     nx := AddField(win, nx, y, "Corner radius:", 60, g, "ov_radius", overlayRadius)
 
-    y += 26
+    y += 28
     nx := AddField(win, x, y, "Text color:", 220, g, "ov_textColor", overlayTextColor)
     nx := AddField(win, nx, y, "Background:", 220, g, "ov_backColor", overlayBackColor)
 
-    y += 26
+    y += 28
     win.Add("Text", "x" x " y" y, "Theme:")
     g["ov_theme"] := win.Add("DropDownList", "x+6 yp-2 w180", ["Neo Lime", "Ocean", "Slate"])
     g["ov_theme"].Choose(overlayTheme + 1)
 
-    y += 28
+    y += 30
     g["ov_compact"] := win.Add("CheckBox", "x" x " y" y, "Compact (one line)")
     g["ov_compact"].Value := overlayCompact ? 1 : 0
 
@@ -685,7 +715,7 @@ BuildGui(cfg) {
     g["ov_showActive"] := win.Add("CheckBox", "x" x " y" y, "Show ACTIVE macro")
     g["ov_showActive"].Value := overlayShowActive
 
-    y += 30
+    y += 32
     g["btnOvApply"] := win.Add("Button", "x" x " y" y " w160", "Apply Overlay")
     btnROv := win.Add("Button", "x+12 yp w160", "Reset Overlay")
     g["btnOvApply"].OnEvent("Click", (*) => SyncOverlayFromGui(true))
