@@ -1,28 +1,32 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
-#Warn
 Persistent
+;#Warn  ; (optional)
 
-; File: RobloxMacro_CleanGUI_NoCBH.ahk
-; Clean GUI, NO CBH/CBHP, compact layout that fits on screen
-
-CoordMode "Mouse", "Screen"
-SetMouseDelay(-1)
-
+; =========================================================
+;                     CONFIG / DEFAULTS
+; =========================================================
 INI_PATH := A_ScriptDir "\RobloxMacroSettings.ini"
 PI := 3.14159265358979
 
 DEFAULT := Map(
+    ; General
     "privateServerLink", "https://www.roblox.com/share?code=843fe2cca5580742b1dbff7fdf8d07bc&type=Server",
     "robloxExe",         "RobloxPlayerBeta.exe",
     "browserExe",        "brave.exe",
+
+    ; Auto Rejoin timing
     "rejoinIntervalMin", 60,
     "preRelaunchSec",    15,
     "postLinkWaitSec",   9,
     "detectTimeoutSec",  15,
     "browserGraceSec",   3,
     "autoRejoinEnabled", 1,
+
+    ; UI opts
     "showCountdownTip",  1,
+
+    ; ---------------- Eggsterminator (was Macro 1)
     "m1_startDelaySec",  20,
     "m1_tickMs",         25,
     "m1_moveDurationSec",25,
@@ -43,20 +47,36 @@ DEFAULT := Map(
     "m1_keyEsc",         "Esc",
     "m1_keyReset",       "r",
     "m1_keyEnter",       "Enter",
-    "m1_showBox",        1,
-    "m1_boxThickness",   3,
-    "m1_boxColor",       "Red",
-    "m1_showPath",       1,
-    "m1_pathColor",      "Yellow",
-    "m1_pathStepPx",     28,
-    "m1_pathDotSize",    2,
-    "m1_cursorDotColor", "Aqua",
-    "m1_cursorDotSize",  6,
+
+    ; ---------------- CBHP (was Macro 2)
+    "m2_startDelaySec",  20,
+    "m2_tickMs",         25,
+    "m2_moveDurationSec",25,
+    "m2_loopWaitSec",    5,
+    "m2_centerX",        Floor(A_ScreenWidth/2),
+    "m2_centerY",        Floor(A_ScreenHeight/2),
+    "m2_radius",         150,
+    "m2_degPerTick",     10,
+    "m2_clickEveryMs",   60,
+    "m2_autoClick",      1,
+    "m2_prepKey",        "Up",
+    "m2_prepHoldMs",     500,
+    "m2_pause1Sec",      2,
+    "m2_pause2Sec",      2,
+    "m2_keyEsc",         "Esc",
+    "m2_keyReset",       "r",
+    "m2_keyEnter",       "Enter",
+
+    ; --- Hotkeys (editable) ---
     "hk_m1",      "F6",
+    "hk_m2",      "F7",
     "hk_rejoin",  "F8",
     "hk_overlay", "F9"
 )
 
+; =========================================================
+;                       RUNTIME STATE
+; =========================================================
 state := Map(
     "m1_running", false,
     "m1_step", 0,
@@ -65,180 +85,43 @@ state := Map(
     "m1_topUp", 0,
     "m1_mouseX", DEFAULT["m1_LeftX"],
     "m1_isDown", false,
-    "m1_lastX", 0,
-    "m1_lastY", 0,
-    "m1_lastDownRefresh", 0,
+
+    "m2_running", false,
+    "m2_step", 0,
+    "m2_stepStart", 0,
+    "m2_sub", 0,
+    "m2_angleDeg", 0.0,
+    "m2_isDown", false,
+    "m2_lastClickTick", 0,
+
     "nextRejoinTick", A_TickCount + (DEFAULT["rejoinIntervalMin"] * 60000)
 )
 
 cfg := LoadSettings()
 
+; =========================================================
+;                    OVERLAY: defaults + load
+; =========================================================
 global overlayEnabled := true
 global overlayX := 20, overlayY := 60
-global overlayW := 560, overlayH := 74
-global overlayOpacity := 200
+global overlayW := 520, overlayH := 72
+global overlayOpacity := 190
 global overlayFontSize := 12
 global overlayTextColor := "Lime"
 global overlayBackColor := "Black"
 global overlayShowSteps := true
 global overlayShowActive := true
-global overlayPadding := 12
+global overlayPadding := 10
 global overlayRadius := 14
 global overlayCompact := false
 global overlayTheme := 0
 global _ov := 0
 
-global _m1bxT := 0, _m1bxB := 0, _m1bxL := 0, _m1bxR := 0
-global _m1Dots := []
-global _m1CurDot := 0
-
-global _rbxHwnd := 0
-global _lastFocusTick := 0
-
-FindRobloxHwnd() {
-    global cfg
-    hwnd := WinExist("ahk_exe " cfg["robloxExe"])
-    if (!hwnd)
-        hwnd := WinExist("Roblox")
-    return hwnd ? hwnd : 0
-}
-EnsureRobloxFocus(msCooldown := 300, reassertDown := false) {
-    global _rbxHwnd, _lastFocusTick, state
-    if (A_TickCount - _lastFocusTick < msCooldown)
-        return
-    if (!_rbxHwnd || !WinExist("ahk_id " _rbxHwnd))
-        _rbxHwnd := FindRobloxHwnd()
-    activated := false
-    if (_rbxHwnd && !WinActive("ahk_id " _rbxHwnd)) {
-        WinActivate("ahk_id " _rbxHwnd)
-        activated := true
-    }
-    _lastFocusTick := A_TickCount
-    if (reassertDown && activated) {
-        if (state["m1_running"] && state["m1_isDown"])
-            LMB_Down()
-    }
-}
-
-GetBrowserPresets() => ["brave.exe","chrome.exe","msedge.exe","firefox.exe","opera.exe","vivaldi.exe"]
-
-LoadServerPresets() {
-    global INI_PATH, DEFAULT
-    arr := []
-    if FileExist(INI_PATH) {
-        loop 10 {
-            v := ""
-            try {
-                v := IniRead(INI_PATH, "servers", A_Index, "")
-            } catch {
-                v := ""
-            }
-            if (v != "")
-                arr.Push(v)
-        }
-    }
-    if (arr.Length = 0)
-        arr.Push(DEFAULT["privateServerLink"])
-    return arr
-}
-SaveServerPreset(link) {
-    global INI_PATH, ui
-    link := Trim(link)
-    if (link = "")
-        return
-    list := LoadServerPresets()
-    nlist := []
-    seen := Map()
-    nlist.Push(link), seen[link] := true
-    for _, s in list {
-        s := Trim(s)
-        if (s != "" && !seen.Has(s)) {
-            nlist.Push(s), seen[s] := true
-        }
-        if (nlist.Length >= 10)
-            break
-    }
-    loop 10 {
-        if (A_Index <= nlist.Length) {
-            IniWrite(nlist[A_Index], INI_PATH, "servers", A_Index)
-        } else {
-            try {
-                IniDelete(INI_PATH, "servers", A_Index)
-            } catch {
-            }
-        }
-    }
-    try {
-        if IsSet(ui) && ui.Has("serverDD") {
-            _DD_InitAndChoose(ui["serverDD"], nlist, link)
-            ui["link"].Value := link
-        }
-    } catch {
-    }
-}
-RemoveServerPreset(link) {
-    global INI_PATH, ui
-    link := Trim(link)
-    if (link = "")
-        return
-    list := LoadServerPresets()
-    nlist := []
-    for _, s in list
-        if (Trim(s) != link)
-            nlist.Push(s)
-    if (nlist.Length = 0)
-        nlist.Push(link)
-    loop 10 {
-        if (A_Index <= nlist.Length) {
-            IniWrite(nlist[A_Index], INI_PATH, "servers", A_Index)
-        } else {
-            try {
-                IniDelete(INI_PATH, "servers", A_Index)
-            } catch {
-            }
-        }
-    }
-    try {
-        if IsSet(ui) && ui.Has("serverDD") {
-            _DD_InitAndChoose(ui["serverDD"], nlist, nlist[1])
-            ui["link"].Value := ui["serverDD"].Text
-        }
-    } catch {
-    }
-}
-_DD_InitAndChoose(dd, items, value) {
-    list := []
-    if IsObject(items) {
-        for _, s in items
-            list.Push(s)
-    } else if (items != "") {
-        list.Push(items)
-    }
-    dd.Delete()
-    if (list.Length)
-        dd.Add(list)
-
-    foundIdx := 0
-    for i, s in list
-        if (s = value) {
-            foundIdx := i
-            break
-        }
-    if (!foundIdx) {
-        dd.Add([value])
-        foundIdx := list.Length + 1
-        try {
-            items.Push(value)
-        } catch {
-        }
-    }
-    dd.Choose(foundIdx)
-}
-
+; ---------- OVERLAY FUNCS ----------
 LoadOverlaySettings() {
     global overlayEnabled, overlayX, overlayY, overlayW, overlayH, overlayOpacity
     global overlayFontSize, overlayTextColor, overlayBackColor, overlayShowSteps, overlayShowActive
-    global overlayPadding, overlayRadius, overlayCompact, overlayTheme, INI_PATH
+    global overlayPadding, overlayRadius, overlayCompact, overlayTheme
     if !FileExist(INI_PATH)
         return
     overlayEnabled   := Integer(IniRead(INI_PATH, "overlay", "enabled", overlayEnabled ? 1 : 0)) = 1
@@ -260,7 +143,7 @@ LoadOverlaySettings() {
 SaveOverlaySettings() {
     global overlayEnabled, overlayX, overlayY, overlayW, overlayH, overlayOpacity
     global overlayFontSize, overlayTextColor, overlayBackColor, overlayShowSteps, overlayShowActive
-    global overlayPadding, overlayRadius, overlayCompact, overlayTheme, INI_PATH
+    global overlayPadding, overlayRadius, overlayCompact, overlayTheme
     IniWrite(overlayEnabled ? 1 : 0, INI_PATH, "overlay", "enabled")
     IniWrite(overlayX, INI_PATH, "overlay", "x")
     IniWrite(overlayY, INI_PATH, "overlay", "y")
@@ -286,15 +169,12 @@ ApplyOverlayTheme(idx) {
     }
 }
 ApplyRoundedCorners(hwnd, w, h, radius) {
-    try {
-        if (radius <= 0) {
-            DllCall("SetWindowRgn", "ptr", hwnd, "ptr", 0, "int", true)
-            return
-        }
-        hrgn := DllCall("CreateRoundRectRgn", "int", 0, "int", 0, "int", w+1, "int", h+1, "int", radius, "int", radius, "ptr")
-        DllCall("SetWindowRgn", "ptr", hwnd, "ptr", hrgn, "int", true)
-    } catch {
+    if (radius <= 0) {
+        DllCall("SetWindowRgn", "ptr", hwnd, "ptr", 0, "int", true)
+        return
     }
+    hrgn := DllCall("CreateRoundRectRgn", "int", 0, "int", 0, "int", w+1, "int", h+1, "int", radius, "int", radius, "ptr")
+    DllCall("SetWindowRgn", "ptr", hwnd, "ptr", hrgn, "int", true)
 }
 InitOverlay() {
     global _ov, overlayX, overlayY, overlayW, overlayH, overlayOpacity
@@ -304,7 +184,7 @@ InitOverlay() {
     DestroyOverlay()
     ApplyOverlayTheme(overlayTheme)
 
-    _ov := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20 +E0x08000000")
+    _ov := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20")
     _ov.BackColor := overlayBackColor
     _ov.SetFont("s" overlayFontSize " c" overlayTextColor " bold", "Segoe UI")
 
@@ -315,14 +195,11 @@ InitOverlay() {
         _ov.Add("Text", "x" P " y" P " w" (overlayW - 2*P) " vHdr", "AR: --  |  ACTIVE: --")
     } else {
         _ov.Add("Text", "x" P " y" P " w" (overlayW - 2*P) " vHdr", "AR: --  |  ACTIVE: --  |  Next: --:--:--")
-        _ov.Add("Text", "x" P " y" (P + lineH) " w" (overlayW - 2*P) " vSub", "Egg: STOP")
+        _ov.Add("Text", "x" P " y" (P + lineH) " w" (overlayW - 2*P) " vSub", "Egg: STOP   ·   CBHP: STOP")
     }
 
     _ov.Show("x" overlayX " y" overlayY " w" overlayW " h" overlayH " NoActivate")
-    try {
-        WinSetTransparent(overlayOpacity, "ahk_id " _ov.Hwnd)
-    } catch {
-    }
+    WinSetTransparent(overlayOpacity, "ahk_id " _ov.Hwnd)
     ApplyRoundedCorners(_ov.Hwnd, overlayW, overlayH, overlayRadius)
 }
 ResizeOverlay(newW, newH) {
@@ -336,7 +213,6 @@ ResizeOverlay(newW, newH) {
             _ov["Hdr"].Opt("w" (newW - 2*P))
         if _ov.Has("Sub")
             _ov["Sub"].Opt("w" (newW - 2*P))
-    } catch {
     }
     ApplyRoundedCorners(_ov.Hwnd, newW, newH, overlayRadius)
 }
@@ -348,16 +224,14 @@ EstimateTextWidth(text, fontSize) {
 DestroyOverlay() {
     global _ov
     if (_ov) {
-        try {
-            _ov.Destroy()
-        } catch {
-        }
+        _ov.Destroy()
         _ov := 0
     }
 }
 UpdateOverlay() {
     global _ov, state, cfg, overlayShowSteps
     global overlayW, overlayH, overlayFontSize, overlayPadding, overlayCompact
+
     if !_ov
         return
 
@@ -369,7 +243,7 @@ UpdateOverlay() {
     secs := Floor(Mod(rem / 1000, 60))
 
     ar := cfg["autoRejoinEnabled"] ? ("ON " Format("{:02}:{:02}:{:02}", hrs, mins, secs)) : "OFF"
-    active := state["m1_running"] ? "Eggsterminator" : "None"
+    active := state["m1_running"] ? "Eggsterminator" : (state["m2_running"] ? "CBHP" : "None")
 
     if (overlayCompact) {
         _ov["Hdr"].Text := "AR: " ar "  |  ACTIVE: " active
@@ -378,6 +252,7 @@ UpdateOverlay() {
                           ? Format("{:02}:{:02}:{:02}", hrs, mins, secs) : "--:--:--")
 
         m1_running := state["m1_running"]
+        m2_running := state["m2_running"]
 
         if (overlayShowSteps && m1_running) {
             m1s := state["m1_step"]
@@ -387,7 +262,16 @@ UpdateOverlay() {
         } else {
             m1Text := "Egg: " (m1_running ? "RUN" : "STOP")
         }
-        _ov["Sub"].Text := m1Text
+
+        if (overlayShowSteps && m2_running) {
+            m2s := state["m2_step"]
+            m2Elapsed := (state.Has("m2_stepStart") && state["m2_stepStart"] > 0)
+                ? Round((A_TickCount - state["m2_stepStart"]) / 1000) : 0
+            m2Text := "CBHP[" m2s "]: " StepNameM2(m2s) " (" m2Elapsed "s)"
+        } else {
+            m2Text := "CBHP: " (m2_running ? "RUN" : "STOP")
+        }
+        _ov["Sub"].Text := m1Text "   ·   " m2Text
     }
 
     textW1 := EstimateTextWidth(_ov["Hdr"].Text, overlayFontSize)
@@ -417,23 +301,15 @@ ToggleOverlay() {
 IncreaseOverlayOpacity() {
     global overlayOpacity, _ov
     overlayOpacity := Min(255, overlayOpacity + 10)
-    if _ov {
-        try {
-            WinSetTransparent(overlayOpacity, "ahk_id " _ov.Hwnd)
-        } catch {
-        }
-    }
+    if _ov
+        WinSetTransparent(overlayOpacity, "ahk_id " _ov.Hwnd)
     SaveOverlaySettings()
 }
 DecreaseOverlayOpacity() {
     global overlayOpacity, _ov
     overlayOpacity := Max(60, overlayOpacity - 10)
-    if _ov {
-        try {
-            WinSetTransparent(overlayOpacity, "ahk_id " _ov.Hwnd)
-        } catch {
-        }
-    }
+    if _ov
+        WinSetTransparent(overlayOpacity, "ahk_id " _ov.Hwnd)
     SaveOverlaySettings()
 }
 DragOverlay() {
@@ -459,25 +335,39 @@ SyncOverlayFromGui(apply := false) {
     SaveOverlaySettings()
     ForceOverlayRefresh()
 }
+; ---------- END OVERLAY FUNCS ----------
 
+; call (now safe)
 LoadOverlaySettings()
 if (overlayEnabled)
     InitOverlay()
 SetTimer(UpdateOverlay, 400)
 
-ui := BuildGui(cfg)
+; Build GUI
+ui  := BuildGui(cfg)
 
+; =========================================================
+;                       TIMERS / HOTKEYS
+; =========================================================
 SetTimer(UpdateCountdown, 1000)
 ApplyAutoRejoinTimer()
 
 ^!Up::IncreaseOverlayOpacity()
 ^!Down::DecreaseOverlayOpacity()
 ^!o::SyncOverlayFromGui(true)
+
+; --- Panic Stop (reliable) ---
 Hotkey("Pause", (*) => StopAll(), "On")
+
 Hotkey("~LButton", (*) => (
-    (GetKeyState("Ctrl","P") && GetKeyState("Alt","P") && IsSet(_ov) && _ov) ? DragOverlay() : 0
+    (GetKeyState("Ctrl","P") && GetKeyState("Alt","P") && IsSet(_ov) && _ov)
+        ? DragOverlay()
+        : 0
 ))
 
+; =========================================================
+;                     GUI helper: label + edit
+; =========================================================
 AddField(win, x, y, labelTxt, editW, targetMap, key, initVal) {
     local lbl, lw, lh, ctrl, ew, eh
     lbl := win.Add("Text", "x" x " y" y, labelTxt)
@@ -489,35 +379,24 @@ AddField(win, x, y, labelTxt, editW, targetMap, key, initVal) {
     return x + ew + 16
 }
 
-AddSectionHeader(win, text, x, y) {
-    win.SetFont("s11 Bold", "Segoe UI")
-    ctrl := win.Add("Text", "x" x " y" y " c0x1E6FBF", text)
-    win.SetFont("s10", "Segoe UI")
-    return ctrl
-}
-
-AddSectionHint(win, text, x, y, w := 760) {
-    return win.Add("Text", "x" x " y" y " w" w " c0x56606B +0x200", text)
-}
-
+; =========================================================
+;                    HOTKEY MANAGEMENT
+; =========================================================
 global _hkBound := Map()
+
 NormalizeHotkey(hk) => Trim(hk)
 UnregisterHotkey(name) {
-    try {
-        Hotkey(name,, "Off")
-    } catch {
-    }
+    try Hotkey(name,, "Off")
 }
 BindHotkey(name, fnObj) {
     global _hkBound
     name := NormalizeHotkey(name)
     if (name = "")
         return
+    UnregisterHotkey(name)
+    Hotkey(name, fnObj, "On")
     if (!IsSet(_hkBound) || !IsObject(_hkBound))
         _hkBound := Map()
-    if (_hkBound.Has(name))
-        UnregisterHotkey(name)
-    Hotkey(name, fnObj, "On")
     _hkBound[name] := fnObj
 }
 ApplyHotkeys() {
@@ -530,6 +409,8 @@ ApplyHotkeys() {
 
     if (Trim(cfg["hk_m1"]) != "")
         BindHotkey(cfg["hk_m1"], (*) => ToggleMacro1())
+    if (Trim(cfg["hk_m2"]) != "")
+        BindHotkey(cfg["hk_m2"], (*) => ToggleMacro2())
     if (Trim(cfg["hk_rejoin"]) != "")
         BindHotkey(cfg["hk_rejoin"], (*) => Rejoin())
     if (Trim(cfg["hk_overlay"]) != "")
@@ -537,151 +418,162 @@ ApplyHotkeys() {
 
     if (IsSet(ui) && ui.Has("btnM1"))
         ui["btnM1"].Text := "Start Eggsterminator (" cfg["hk_m1"] ")"
+    if (IsSet(ui) && ui.Has("btnM2"))
+        ui["btnM2"].Text := "Start CBHP (" cfg["hk_m2"] ")"
     if (IsSet(ui) && ui.Has("btnRejoin"))
         ui["btnRejoin"].Text := "Rejoin (" cfg["hk_rejoin"] ")"
 }
 
+; =========================================================
+;                            GUI  (with overlap fixes)
+; =========================================================
 BuildGui(cfg) {
     g := Map()
-    win := Gui("+AlwaysOnTop +Resize +MinSize820x600", "Roblox Macro · Clean UI")
+    win := Gui("+AlwaysOnTop +Resize +MinSize800x560", "AppleMac")
     win.MarginX := 10, win.MarginY := 8
-    win.BackColor := "0xF7F9FB"
-    win.SetFont("s10", "Segoe UI")
 
-    header := win.Add("Text", "xm ym w790 c0x1E6FBF +0x200 Center", "Roblox Macro Control Panel")
-    win.Add("Text", "xm y+4 w790 c0x56606B Center", "Tune servers, automation timing, and overlay visibility without touching the script.")
+    tabs := win.Add("Tab3", "w760 h470", ["General", "Eggsterminator", "CBHP", "Options", "Overlay"])
 
-    tabs := win.Add("Tab3", "xm y+10 w790 h500", ["General", "Eggsterminator", "Options", "Overlay"])
-
+    ; ---------- General ----------
     tabs.UseTab("General")
-    AddSectionHeader(win, "Game & Server", 18, 44)
-    AddSectionHint(win, "Pick a private server link, then save it for later. The dropdown always reflects your saved presets.", 24, 64)
-    win.Add("GroupBox", "x10 y84 w770 h224", "Game & Server")
-    x := 24, y := 106
-    nx := AddField(win, x, y, "Private Server Link:", 580, g, "link", cfg["privateServerLink"])
-    g["serverDD"] := win.Add("DropDownList", "x24 y" (y+26) " w628")
-    _DD_InitAndChoose(g["serverDD"], LoadServerPresets(), cfg["privateServerLink"])
-    g["serverDD"].OnEvent("Change", (*) => ( g["link"].Value := g["serverDD"].Text ))
-    g["btnServerSave"] := win.Add("Button", "x+6 yp-1 w120", "Save")
-    g["btnServerDel"]  := win.Add("Button", "x+6 yp-1 w120", "Remove")
-    g["btnServerSave"].OnEvent("Click", (*) => SaveServerPreset(g["link"].Value))
-    g["btnServerDel"].OnEvent("Click", (*) => RemoveServerPreset(g["serverDD"].Text))
+    x := 20, y := 35
+    nx := AddField(win, x, y, "Private Server Link:", 600, g, "link", cfg["privateServerLink"])
 
-    y := 180, x := 24
-    nx := AddField(win, x, y, "Roblox EXE:", 240, g, "roblox", cfg["robloxExe"])
-    nx := AddField(win, nx, y, "Browser EXE:", 240, g, "browser", cfg["browserExe"])
-    g["browserDD"] := win.Add("DropDownList", "x" (nx-240) " y" (y+26) " w240")
-    _DD_InitAndChoose(g["browserDD"], GetBrowserPresets(), cfg["browserExe"])
-    g["browserDD"].OnEvent("Change", (*) => ( g["browser"].Value := g["browserDD"].Text ))
+    y += 30
+    nx := AddField(win, x, y, "Roblox EXE:", 220, g, "roblox", cfg["robloxExe"])
+    nx := AddField(win, nx, y, "Browser EXE:", 220, g, "browser", cfg["browserExe"])
 
-    y := 240
-    AddSectionHeader(win, "Rejoin cadence", 18, y)
-    AddSectionHint(win, "Control how often the macro refreshes your Roblox session and how long it waits around transitions.", 24, y+18)
-    y += 46, x := 24
-    nx := AddField(win, x, y, "Interval (min):", 60, g, "rejoinMin", cfg["rejoinIntervalMin"])
+    y += 30
+    nx := AddField(win, x, y, "Auto Rejoin (min):", 60, g, "rejoinMin", cfg["rejoinIntervalMin"])
     nx := AddField(win, nx, y, "Detect Timeout (s):", 60, g, "detectTimeout", cfg["detectTimeoutSec"])
 
-    y += 32, x := 24
+    y += 30
     nx := AddField(win, x, y, "Pre-Relaunch (s):", 60, g, "preRelaunch", cfg["preRelaunchSec"])
     nx := AddField(win, nx, y, "Post Link Wait (s):", 60, g, "postLinkWait", cfg["postLinkWaitSec"])
     nx := AddField(win, nx, y, "Browser Grace (s):", 60, g, "browserGrace", cfg["browserGraceSec"])
 
     y += 34
-    g["autoRejoinEnabled"] := win.Add("CheckBox", "x24 y" y, "Enable Auto Rejoin")
+    g["autoRejoinEnabled"] := win.Add("CheckBox", "x20 y" y, "Enable Auto Rejoin")
     g["autoRejoinEnabled"].Value := cfg["autoRejoinEnabled"]
-    btnRG := win.Add("Button", "x+8 yp-4 w140", "Reset General")
+
+    btnRG := win.Add("Button", "x+12 yp-4 w140", "Reset General")
     btnRG.OnEvent("Click", (*) => ResetTabDefaults("General"))
 
+    ; ---------- Eggsterminator ----------
     tabs.UseTab("Eggsterminator")
-    AddSectionHeader(win, "Timing", 24, 44)
-    AddSectionHint(win, "Tune delays to line up with your Roblox loading time and loop pacing.", 30, 64)
-    x := 24, y := 96
+    x := 20, y := 40
     nx := AddField(win, x, y, "Start Delay (s):", 60, g, "m1_startDelay",    cfg["m1_startDelaySec"])
     nx := AddField(win, nx, y, "Tick (ms):",       60, g, "m1_tick",          cfg["m1_tickMs"])
     nx := AddField(win, nx, y, "Move Time (s):",   60, g, "m1_moveDuration",  cfg["m1_moveDurationSec"])
     nx := AddField(win, nx, y, "Loop Wait (s):",   60, g, "m1_loopWait",      cfg["m1_loopWaitSec"])
 
-    y += 32
+    y += 30
     nx := AddField(win, x,  y, "Esc Pause (s):",   60, g, "m1_pause1",        cfg["m1_pause1Sec"])
     nx := AddField(win, nx, y, "'Reset' Pause (s):",60, g, "m1_pause2",       cfg["m1_pause2Sec"])
 
-    y += 32
-    AddSectionHeader(win, "Path", 24, y)
-    y += 24
+    y += 30
     nx := AddField(win, x,  y, "LeftX:",           70, g, "m1_LeftX",         cfg["m1_LeftX"])
     nx := AddField(win, nx, y, "RightX:",          70, g, "m1_RightX",        cfg["m1_RightX"])
     nx := AddField(win, nx, y, "CenterY:",         70, g, "m1_CenterY",       cfg["m1_CenterY"])
     nx := AddField(win, nx, y, "Amplitude:",       70, g, "m1_Amplitude",     cfg["m1_Amplitude"])
     nx := AddField(win, nx, y, "Speed:",           70, g, "m1_Speed",         cfg["m1_Speed"])
 
-    y += 32, x := 24
-    AddSectionHeader(win, "Visual helpers", 24, y)
-    y += 26
-    g["m1_showBox"] := win.Add("CheckBox", "x" x " y" y, "Show movement area box")
-    g["m1_showBox"].Value := cfg["m1_showBox"]
-    nx := AddField(win, x+220, y, "Box thickness:", 60, g, "m1_boxThickness", cfg["m1_boxThickness"])
-    nx := AddField(win, nx, y, "Box color:", 100, g, "m1_boxColor", cfg["m1_boxColor"])
-
-    y += 28, x := 24
-    g["m1_showPath"] := win.Add("CheckBox", "x" x " y" y, "Show path dots")
-    g["m1_showPath"].Value := cfg["m1_showPath"]
-    nx := AddField(win, x+150, y, "Path color:", 100, g, "m1_pathColor", cfg["m1_pathColor"])
-    nx := AddField(win, nx, y, "Step (px):", 60, g, "m1_pathStepPx", cfg["m1_pathStepPx"])
-    nx := AddField(win, nx, y, "Dot size:", 60, g, "m1_pathDotSize", cfg["m1_pathDotSize"])
-
-    y += 26, x := 24
-    nx := AddField(win, x, y, "Cursor dot color:", 100, g, "m1_cursorDotColor", cfg["m1_cursorDotColor"])
-    nx := AddField(win, nx, y, "Cursor dot size:", 80, g, "m1_cursorDotSize",  cfg["m1_cursorDotSize"])
-
-    y += 32, x := 24
-    AddSectionHeader(win, "Prep Keys", 24, y)
-    AddSectionHint(win, "Keys pressed before the loop starts to prep your Roblox session.", 30, y+18)
-    y += 42
+    y += 30, x := 20
+    win.Add("Text", "x" x " y" y " cGray", "Prep Keys")
+    y += 18
     nx := AddField(win, x,  y, "Key1:",            80, g, "m1_key1",          cfg["m1_key1"])
     nx := AddField(win, nx, y, "Key1 hold (ms):",  80, g, "m1_key1HoldMs",    cfg["m1_key1HoldMs"])
     nx := AddField(win, nx, y, "Key2:",            80, g, "m1_key2",          cfg["m1_key2"])
-    y += 26, x := 24
+    y += 28, x := 20
     nx := AddField(win, x,  y, "Key2 hold (ms):",  80, g, "m1_key2HoldMs",    cfg["m1_key2HoldMs"])
     nx := AddField(win, nx, y, "Post-Key2 delay (ms):", 100, g, "m1_postKey2DelayMs", cfg["m1_postKey2DelayMs"])
     nx := AddField(win, nx, y, "After-prep key:",  80, g, "m1_afterPrepKey",  cfg["m1_afterPrepKey"])
 
-    y += 32, x := 24
-    AddSectionHeader(win, "Confirm Keys", 24, y)
-    y += 24
+    y += 28, x := 20
+    win.Add("Text", "x" x " y" y " cGray", "Confirm Keys")
+    y += 18
     nx := AddField(win, x,  y, "Esc key:",         80, g, "m1_keyEsc",        cfg["m1_keyEsc"])
     nx := AddField(win, nx, y, "Reset key:",       80, g, "m1_keyReset",      cfg["m1_keyReset"])
     nx := AddField(win, nx, y, "Enter key:",       80, g, "m1_keyEnter",      cfg["m1_keyEnter"])
 
-    y += 18
-    btnRM1 := win.Add("Button", "x24 y" y " w180", "Reset Eggsterminator")
+    y += 16
+    btnRM1 := win.Add("Button", "x20 y" y " w180", "Reset Eggsterminator")
     btnRM1.OnEvent("Click", (*) => ResetTabDefaults("Eggsterminator"))
 
+    ; ---------- CBHP ----------
+    tabs.UseTab("CBHP")
+    x := 20, y := 40
+    nx := AddField(win, x,  y, "Start Delay (s):", 60, g, "m2_startDelay",    cfg["m2_startDelaySec"])
+    nx := AddField(win, nx, y, "Tick (ms):",       60, g, "m2_tick",          cfg["m2_tickMs"])
+    nx := AddField(win, nx, y, "Move Time (s):",   60, g, "m2_moveDuration",  cfg["m2_moveDurationSec"])
+    nx := AddField(win, nx, y, "Loop Wait (s):",   60, g, "m2_loopWait",      cfg["m2_loopWaitSec"])
+
+    y += 30
+    nx := AddField(win, x,  y, "CenterX:",         70, g, "m2_centerX",       cfg["m2_centerX"])
+    nx := AddField(win, nx, y, "CenterY:",         70, g, "m2_centerY",       cfg["m2_centerY"])
+    nx := AddField(win, nx, y, "Radius:",          70, g, "m2_radius",        cfg["m2_radius"])
+
+    y += 30
+    nx := AddField(win, x,  y, "Deg / tick:",      70, g, "m2_degPerTick",    cfg["m2_degPerTick"])
+    nx := AddField(win, nx, y, "Click every (ms):",90, g, "m2_clickEveryMs",  cfg["m2_clickEveryMs"])
+
+    ; moved to its own line to avoid overlap
+    y += 30, x := 20
+    g["m2_autoClick"] := win.Add("CheckBox", "x" x " y" y, "Enable auto-click")
+    g["m2_autoClick"].Value := cfg["m2_autoClick"]
+
+    y += 30, x := 20
+    win.Add("Text", "x" x " y" y " cGray", "Prep Key")
+    y += 18
+    nx := AddField(win, x,  y, "Prep key:",        80, g, "m2_prepKey",       cfg["m2_prepKey"])
+    nx := AddField(win, nx, y, "Prep hold (ms):",  80, g, "m2_prepHoldMs",    cfg["m2_prepHoldMs"])
+
+    y += 28, x := 20
+    win.Add("Text", "x" x " y" y " cGray", "Confirm Keys")
+    y += 18
+    nx := AddField(win, x,  y, "Esc key:",         80, g, "m2_keyEsc",        cfg["m2_keyEsc"])
+    nx := AddField(win, nx, y, "Reset key:",       80, g, "m2_keyReset",      cfg["m2_keyReset"])
+    nx := AddField(win, nx, y, "Enter key:",       80, g, "m2_keyEnter",      cfg["m2_keyEnter"])
+    nx := AddField(win, nx, y, "Esc Pause (s):",   70, g, "m2_pause1",        cfg["m2_pause1Sec"])
+    nx := AddField(win, nx, y, "Reset Pause (s):", 70, g, "m2_pause2",        cfg["m2_pause2Sec"])
+
+    y += 16
+    btnRM2 := win.Add("Button", "x20 y" y " w160", "Reset CBHP")
+    btnRM2.OnEvent("Click", (*) => ResetTabDefaults("CBHP"))
+
+    ; ---------- Options ----------
     tabs.UseTab("Options")
-    AddSectionHeader(win, "Hotkeys & config", 24, 44)
-    AddSectionHint(win, "Update binds then click Apply Hotkeys to push them live right away.", 30, 64)
-    g["showCountdownTip"] := win.Add("CheckBox","x24 y96","Show countdown tooltip")
+    ; (Removed the "Options" label above the checkbox)
+    g["showCountdownTip"] := win.Add("CheckBox","x20 y35","Show countdown tooltip")
     g["showCountdownTip"].Value := cfg["showCountdownTip"]
 
-    y := 126
-    g["hk_m1"] := win.Add("Edit", "x24 y" y " w120", cfg["hk_m1"]),       win.Add("Text", "x+6 yp+3", "Egg (start/stop)")
+    y := 64
+    win.Add("Text", "x20 y" y " Section", "Hotkeys")
+    y += 22
+    g["hk_m1"] := win.Add("Edit", "x20 y" y " w120", cfg["hk_m1"]),       win.Add("Text", "x+6 yp+3", "Egg (start/stop)")
     y += 28
-    g["hk_rejoin"] := win.Add("Edit", "x24 y" y " w120", cfg["hk_rejoin"]), win.Add("Text", "x+6 yp+3", "Rejoin")
+    g["hk_m2"] := win.Add("Edit", "x20 y" y " w120", cfg["hk_m2"]),       win.Add("Text", "x+6 yp+3", "CBHP (start/stop)")
     y += 28
-    g["hk_overlay"] := win.Add("Edit", "x24 y" y " w120", cfg["hk_overlay"]), win.Add("Text", "x+6 yp+3", "Toggle overlay")
+    g["hk_rejoin"] := win.Add("Edit", "x20 y" y " w120", cfg["hk_rejoin"]), win.Add("Text", "x+6 yp+3", "Rejoin")
+    y += 28
+    g["hk_overlay"] := win.Add("Edit", "x20 y" y " w120", cfg["hk_overlay"]), win.Add("Text", "x+6 yp+3", "Toggle overlay")
 
     y += 36
-    btnApplyHK := win.Add("Button", "x24 y" y " w160", "Apply Hotkeys Now")
-    btnImport  := win.Add("Button", "x+12 yp w160", "Import Config…")
-    btnApplyHK.OnEvent("Click", (*) => ( SyncFromGui(), SaveSettings(), ApplyHotkeys(), ToolTip("Hotkeys applied"), SetTimer(() => ToolTip(), -700) ))
-    btnImport.OnEvent("Click", (*) => ImportConfig())
-    y += 38
-    btnRO := win.Add("Button", "x24 y" y " w160", "Reset Options")
+    btnApplyHK := win.Add("Button", "x20 y" y " w160", "Apply Hotkeys Now")
+    btnApplyHK.OnEvent("Click", (*) => (
+        SyncFromGui(),
+        SaveSettings(),
+        ApplyHotkeys(),
+        ToolTip("Hotkeys applied"), Sleep(500), ToolTip()
+    ))
+
+    y += 40
+    btnRO := win.Add("Button", "x20 y" y " w160", "Reset Options")
     btnRO.OnEvent("Click", (*) => ResetTabDefaults("Options"))
 
+    ; ---------- Overlay ----------
     tabs.UseTab("Overlay")
-    AddSectionHeader(win, "Overlay sizing", 24, 44)
-    AddSectionHint(win, "Change text size, padding, and background to make the on-screen overlay readable on your monitor.", 30, 64)
-    x := 24, y := 96
+    x := 20, y := 35
     g["ov_enabled"] := win.Add("CheckBox", "x" x " y" y, "Enable overlay")
     g["ov_enabled"].Value := overlayEnabled ? 1 : 0
 
@@ -707,15 +599,16 @@ BuildGui(cfg) {
     g["ov_compact"] := win.Add("CheckBox", "x" x " y" y, "Compact (one line)")
     g["ov_compact"].Value := overlayCompact ? 1 : 0
 
-    y += 22
+    y += 24
     g["ov_showSteps"] := win.Add("CheckBox", "x" x " y" y, "Show step names + elapsed")
     g["ov_showSteps"].Value := overlayShowSteps
 
-    y += 22
+    y += 24
     g["ov_showActive"] := win.Add("CheckBox", "x" x " y" y, "Show ACTIVE macro")
     g["ov_showActive"].Value := overlayShowActive
 
-    y += 32
+    ; Buttons side-by-side to avoid overlap
+    y += 30
     g["btnOvApply"] := win.Add("Button", "x" x " y" y " w160", "Apply Overlay")
     btnROv := win.Add("Button", "x+12 yp w160", "Reset Overlay")
     g["btnOvApply"].OnEvent("Click", (*) => SyncOverlayFromGui(true))
@@ -723,16 +616,19 @@ BuildGui(cfg) {
 
     tabs.UseTab()
 
+    ; Footer
     win.Add("Text","xm","Status:")
-    g["status"] := win.Add("Text","x+6 w360","Eggsterminator: Stopped")
+    g["status"] := win.Add("Text","x+6 w360","Eggsterminator: Stopped | CBHP: Stopped")
     g["countdown"] := win.Add("Text","x+10 w260","Next Rejoin: --h --m --s")
 
     g["btnM1"] := win.Add("Button","xm w220","Start Eggsterminator (" cfg["hk_m1"] ")")
+    g["btnM2"] := win.Add("Button","x+8 w190","Start CBHP (" cfg["hk_m2"] ")")
     g["btnRejoin"] := win.Add("Button","x+8 w130","Rejoin (" cfg["hk_rejoin"] ")")
     g["btnSave"] := win.Add("Button","x+8 w90","Save")
     g["btnExit"] := win.Add("Button","x+8 w90","Exit")
 
     g["btnM1"].OnEvent("Click", (*) => ToggleMacro1())
+    g["btnM2"].OnEvent("Click", (*) => ToggleMacro2())
     g["btnRejoin"].OnEvent("Click", (*) => Rejoin())
     g["btnSave"].OnEvent("Click", (*) => (
         SyncFromGui(),
@@ -740,7 +636,7 @@ BuildGui(cfg) {
         ApplyAutoRejoinTimer(),
         ApplyHotkeys(),
         SyncOverlayFromGui(false),
-        ToolTip("Saved"), SetTimer(() => ToolTip(), -700)
+        ToolTip("Saved"), Sleep(500), ToolTip()
     ))
     g["btnExit"].OnEvent("Click", (*) => ExitApp())
 
@@ -751,19 +647,13 @@ BuildGui(cfg) {
     return g
 }
 
+; =========================================================
+; Push cfg -> controls
+; =========================================================
 RefreshGuiFromCfg(g, cfg) {
     g["link"].Value := cfg["privateServerLink"]
     g["roblox"].Value := cfg["robloxExe"]
     g["browser"].Value := cfg["browserExe"]
-
-    if g.Has("serverDD") {
-        serverList := LoadServerPresets()
-        _DD_InitAndChoose(g["serverDD"], serverList, cfg["privateServerLink"])
-    }
-    if g.Has("browserDD") {
-        browserList := GetBrowserPresets()
-        _DD_InitAndChoose(g["browserDD"], browserList, cfg["browserExe"])
-    }
 
     g["rejoinMin"].Value := cfg["rejoinIntervalMin"]
     g["preRelaunch"].Value := cfg["preRelaunchSec"]
@@ -783,26 +673,6 @@ RefreshGuiFromCfg(g, cfg) {
     g["m1_Amplitude"].Value := cfg["m1_Amplitude"]
     g["m1_Speed"].Value := cfg["m1_Speed"]
 
-    if g.Has("m1_showBox")
-        g["m1_showBox"].Value := cfg["m1_showBox"]
-    if g.Has("m1_boxThickness")
-        g["m1_boxThickness"].Value := cfg["m1_boxThickness"]
-    if g.Has("m1_boxColor")
-        g["m1_boxColor"].Value := cfg["m1_boxColor"]
-
-    if g.Has("m1_showPath")
-        g["m1_showPath"].Value := cfg["m1_showPath"]
-    if g.Has("m1_pathColor")
-        g["m1_pathColor"].Value := cfg["m1_pathColor"]
-    if g.Has("m1_pathStepPx")
-        g["m1_pathStepPx"].Value := cfg["m1_pathStepPx"]
-    if g.Has("m1_pathDotSize")
-        g["m1_pathDotSize"].Value := cfg["m1_pathDotSize"]
-    if g.Has("m1_cursorDotColor")
-        g["m1_cursorDotColor"].Value := cfg["m1_cursorDotColor"]
-    if g.Has("m1_cursorDotSize")
-        g["m1_cursorDotSize"].Value := cfg["m1_cursorDotSize"]
-
     g["m1_key1"].Value := cfg["m1_key1"]
     g["m1_key1HoldMs"].Value := cfg["m1_key1HoldMs"]
     g["m1_key2"].Value := cfg["m1_key2"]
@@ -813,8 +683,28 @@ RefreshGuiFromCfg(g, cfg) {
     g["m1_keyReset"].Value := cfg["m1_keyReset"]
     g["m1_keyEnter"].Value := cfg["m1_keyEnter"]
 
+    g["m2_startDelay"].Value := cfg["m2_startDelaySec"]
+    g["m2_tick"].Value := cfg["m2_tickMs"]
+    g["m2_moveDuration"].Value := cfg["m2_moveDurationSec"]
+    g["m2_loopWait"].Value := cfg["m2_loopWaitSec"]
+    g["m2_centerX"].Value := cfg["m2_centerX"]
+    g["m2_centerY"].Value := cfg["m2_centerY"]
+    g["m2_radius"].Value := cfg["m2_radius"]
+    g["m2_degPerTick"].Value := cfg["m2_degPerTick"]
+    g["m2_clickEveryMs"].Value := cfg["m2_clickEveryMs"]
+    g["m2_autoClick"].Value := cfg["m2_autoClick"]
+
+    g["m2_prepKey"].Value := cfg["m2_prepKey"]
+    g["m2_prepHoldMs"].Value := cfg["m2_prepHoldMs"]
+    g["m2_keyEsc"].Value := cfg["m2_keyEsc"]
+    g["m2_keyReset"].Value := cfg["m2_keyReset"]
+    g["m2_keyEnter"].Value := cfg["m2_keyEnter"]
+    g["m2_pause1"].Value := cfg["m2_pause1Sec"]
+    g["m2_pause2"].Value := cfg["m2_pause2Sec"]
+
     if g.Has("hk_m1") {
         g["hk_m1"].Value := cfg["hk_m1"]
+        g["hk_m2"].Value := cfg["hk_m2"]
         g["hk_rejoin"].Value := cfg["hk_rejoin"]
         g["hk_overlay"].Value := cfg["hk_overlay"]
     }
@@ -838,153 +728,50 @@ RefreshGuiFromCfg(g, cfg) {
 
     if (g.Has("btnM1"))
         g["btnM1"].Text := "Start Eggsterminator (" cfg["hk_m1"] ")"
+    if (g.Has("btnM2"))
+        g["btnM2"].Text := "Start CBHP (" cfg["hk_m2"] ")"
     if (g.Has("btnRejoin"))
         g["btnRejoin"].Text := "Rejoin (" cfg["hk_rejoin"] ")"
 }
 
+; =========================================================
+;                     SETTINGS / INI
+; =========================================================
 LoadSettings() {
-    global DEFAULT, INI_PATH, state
-    out := Map()
+    cfg := Map()
     for key, def in DEFAULT {
-        section := (key ~= "^m1_") ? "macro" : "main"
+        section := (key ~= "^m1_|^m2_") ? "macro" : "main"
         val := FileExist(INI_PATH) ? IniRead(INI_PATH, section, key, def) : def
         if (IsNumber(def))
             val := ParseInt(val, def)
-        out[key] := val
+        cfg[key] := val
     }
-    state["m1_mouseX"] := out["m1_LeftX"]
-    state["nextRejoinTick"] := A_TickCount + (out["rejoinIntervalMin"] * 60000)
-    return out
+    state["m1_mouseX"] := cfg["m1_LeftX"]
+    state["nextRejoinTick"] := A_TickCount + (cfg["rejoinIntervalMin"] * 60000)
+    return cfg
 }
 SaveSettings() {
     global cfg
     for key, val in cfg {
-        section := (key ~= "^m1_") ? "macro" : "main"
+        section := (key ~= "^m1_|^m2_") ? "macro" : "main"
         IniWrite(val, INI_PATH, section, key)
     }
 }
+
 ParseInt(val, def := 0) {
     val := RegExReplace(val, "[^\d-]")
     if (val = "" || val = "-")
         return def
     try {
         return Integer(val)
-    } catch {
+    } catch as e {
         return def
     }
 }
 
-_OvReadIntFrom(file, name, fallback, minV := "", maxV := "") {
-    val := fallback
-    try {
-        val := IniRead(file, "overlay", name, fallback)
-    } catch {
-        val := fallback
-    }
-    v := fallback
-    try {
-        v := Integer(val)
-    } catch {
-        v := fallback
-    }
-    if (minV != "" && IsNumber(minV) && v < minV)
-        v := minV
-    if (maxV != "" && IsNumber(maxV) && v > maxV)
-        v := maxV
-    return v
-}
-_OvReadStrFrom(file, name, fallback) {
-    s := fallback
-    try {
-        s := IniRead(file, "overlay", name, fallback)
-    } catch {
-        s := fallback
-    }
-    return s
-}
-_OvReadBoolFrom(file, name, fallback) {
-    raw := fallback ? 1 : 0
-    try {
-        raw := IniRead(file, "overlay", name, fallback ? 1 : 0)
-    } catch {
-        raw := fallback ? 1 : 0
-    }
-    v := fallback ? 1 : 0
-    try {
-        v := Integer(raw)
-    } catch {
-        v := (fallback ? 1 : 0)
-    }
-    return v ? 1 : 0
-}
-
-ImportConfig() {
-    global DEFAULT, cfg, ui
-    global overlayEnabled, overlayX, overlayY, overlayW, overlayH, overlayOpacity
-    global overlayFontSize, overlayTextColor, overlayBackColor, overlayShowSteps, overlayShowActive
-    global overlayPadding, overlayRadius, overlayCompact, overlayTheme
-
-    path := FileSelect("S16",, "Select settings INI to import", "INI (*.ini)")
-    if (!path)
-        return
-
-    for key, def in DEFAULT {
-        section := (key ~= "^m1_") ? "macro" : "main"
-        val := ""
-        try {
-            val := IniRead(path, section, key, "")
-        } catch {
-            val := ""
-        }
-        if (val != "") {
-            if (IsNumber(def))
-                val := ParseInt(val, def)
-            cfg[key] := val
-        }
-    }
-
-    overlayEnabled    := _OvReadBoolFrom(path, "enabled",   overlayEnabled)
-    overlayX          := _OvReadIntFrom(path, "x",          overlayX)
-    overlayY          := _OvReadIntFrom(path, "y",          overlayY)
-    overlayW          := _OvReadIntFrom(path, "w",          overlayW, 120)
-    overlayH          := _OvReadIntFrom(path, "h",          overlayH, 36)
-    overlayOpacity    := _OvReadIntFrom(path, "opacity",    overlayOpacity, 60, 255)
-    overlayFontSize   := _OvReadIntFrom(path, "fontSize",   overlayFontSize, 8)
-    overlayTextColor  := _OvReadStrFrom(path, "textColor",  overlayTextColor)
-    overlayBackColor  := _OvReadStrFrom(path, "backColor",  overlayBackColor)
-    overlayShowSteps  := _OvReadBoolFrom(path, "showSteps", overlayShowSteps)
-    overlayShowActive := _OvReadBoolFrom(path, "showActive",overlayShowActive)
-    overlayPadding    := _OvReadIntFrom(path, "padding",    overlayPadding, 0)
-    overlayRadius     := _OvReadIntFrom(path, "radius",     overlayRadius, 0)
-    overlayCompact    := _OvReadBoolFrom(path, "compact",   overlayCompact)
-
-    tmp := ""
-    try {
-        tmp := IniRead(path, "overlay", "theme", "")
-    } catch {
-        tmp := ""
-    }
-    if (tmp != "") {
-        try {
-            overlayTheme := Integer(tmp)
-            ApplyOverlayTheme(overlayTheme)
-        } catch {
-        }
-    }
-
-    SaveSettings()
-    SaveOverlaySettings()
-    RefreshGuiFromCfg(ui, cfg)
-    ApplyHotkeys()
-    ApplyAutoRejoinTimer()
-
-    if (overlayEnabled)
-        InitOverlay()
-    else
-        DestroyOverlay()
-    ForceOverlayRefresh()
-}
-
+; =========================================================
+; Read controls -> cfg
+; =========================================================
 SyncFromGui() {
     global ui, cfg, DEFAULT
     global overlayW, overlayH, overlayPadding, overlayRadius, overlayCompact, overlayTheme
@@ -1004,6 +791,7 @@ SyncFromGui() {
     if (ui.Has("autoRejoinEnabled"))
         cfg["autoRejoinEnabled"] := ui["autoRejoinEnabled"].Value ? 1 : 0
 
+    ; M1 numeric
     cfg["m1_startDelaySec"]   := Max(0, ParseInt(ui["m1_startDelay"].Value, DEFAULT["m1_startDelaySec"]))
     cfg["m1_tickMs"]          := Max(5, ParseInt(ui["m1_tick"].Value, DEFAULT["m1_tickMs"]))
     cfg["m1_moveDurationSec"] := Max(1, ParseInt(ui["m1_moveDuration"].Value, DEFAULT["m1_moveDurationSec"]))
@@ -1019,23 +807,7 @@ SyncFromGui() {
         tmp := cfg["m1_LeftX"], cfg["m1_LeftX"] := cfg["m1_RightX"], cfg["m1_RightX"] := tmp
         ui["m1_LeftX"].Value := cfg["m1_LeftX"], ui["m1_RightX"].Value := cfg["m1_RightX"]
     }
-
-    if (ui.Has("m1_showBox"))
-        cfg["m1_showBox"] := ui["m1_showBox"].Value ? 1 : 0
-    if (ui.Has("m1_boxThickness"))
-        cfg["m1_boxThickness"] := Max(1, ParseInt(ui["m1_boxThickness"].Value, DEFAULT["m1_boxThickness"]))
-    if (ui.Has("m1_boxColor"))
-        cfg["m1_boxColor"] := Trim(ui["m1_boxColor"].Value)
-
-    if (ui.Has("m1_showPath")) {
-        cfg["m1_showPath"]       := ui["m1_showPath"].Value ? 1 : 0
-        cfg["m1_pathColor"]      := Trim(ui["m1_pathColor"].Value)
-        cfg["m1_pathStepPx"]     := Max(4, ParseInt(ui["m1_pathStepPx"].Value, DEFAULT["m1_pathStepPx"]))
-        cfg["m1_pathDotSize"]    := Max(1, ParseInt(ui["m1_pathDotSize"].Value, DEFAULT["m1_pathDotSize"]))
-        cfg["m1_cursorDotColor"] := Trim(ui["m1_cursorDotColor"].Value)
-        cfg["m1_cursorDotSize"]  := Max(2, ParseInt(ui["m1_cursorDotSize"].Value, DEFAULT["m1_cursorDotSize"]))
-    }
-
+    ; M1 keys/delays
     cfg["m1_key1"]            := Trim(ui["m1_key1"].Value)
     cfg["m1_key1HoldMs"]      := Max(0, ParseInt(ui["m1_key1HoldMs"].Value, DEFAULT["m1_key1HoldMs"]))
     cfg["m1_key2"]            := Trim(ui["m1_key2"].Value)
@@ -1046,14 +818,37 @@ SyncFromGui() {
     cfg["m1_keyReset"]        := Trim(ui["m1_keyReset"].Value)
     cfg["m1_keyEnter"]        := Trim(ui["m1_keyEnter"].Value)
 
+    ; M2 numeric
+    cfg["m2_startDelaySec"]   := Max(0, ParseInt(ui["m2_startDelay"].Value, DEFAULT["m2_startDelaySec"]))
+    cfg["m2_tickMs"]          := Max(5, ParseInt(ui["m2_tick"].Value, DEFAULT["m2_tickMs"]))
+    cfg["m2_moveDurationSec"] := Max(1, ParseInt(ui["m2_moveDuration"].Value, DEFAULT["m2_moveDurationSec"]))
+    cfg["m2_loopWaitSec"]     := Max(0, ParseInt(ui["m2_loopWait"].Value, DEFAULT["m2_loopWaitSec"]))
+    cfg["m2_centerX"]         := ParseInt(ui["m2_centerX"].Value, DEFAULT["m2_centerX"])
+    cfg["m2_centerY"]         := ParseInt(ui["m2_centerY"].Value, DEFAULT["m2_centerY"])
+    cfg["m2_radius"]          := Max(1, ParseInt(ui["m2_radius"].Value, DEFAULT["m2_radius"]))
+    cfg["m2_degPerTick"]      := Max(1, ParseInt(ui["m2_degPerTick"].Value, DEFAULT["m2_degPerTick"]))
+    cfg["m2_clickEveryMs"]    := Max(0, ParseInt(ui["m2_clickEveryMs"].Value, DEFAULT["m2_clickEveryMs"]))
+    cfg["m2_autoClick"]       := ui["m2_autoClick"].Value ? 1 : 0
+    ; M2 keys/delays
+    cfg["m2_prepKey"]         := Trim(ui["m2_prepKey"].Value)
+    cfg["m2_prepHoldMs"]      := Max(0, ParseInt(ui["m2_prepHoldMs"].Value, DEFAULT["m2_prepHoldMs"]))
+    cfg["m2_keyEsc"]          := Trim(ui["m2_keyEsc"].Value)
+    cfg["m2_keyReset"]        := Trim(ui["m2_keyReset"].Value)
+    cfg["m2_keyEnter"]        := Trim(ui["m2_keyEnter"].Value)
+    cfg["m2_pause1Sec"]       := Max(0, ParseInt(ui["m2_pause1"].Value, DEFAULT["m2_pause1Sec"]))
+    cfg["m2_pause2Sec"]       := Max(0, ParseInt(ui["m2_pause2"].Value, DEFAULT["m2_pause2Sec"]))
+
+    ; Hotkeys
     if (ui.Has("hk_m1")) {
         cfg["hk_m1"]      := Trim(ui["hk_m1"].Value)
+        cfg["hk_m2"]      := Trim(ui["hk_m2"].Value)
         cfg["hk_rejoin"]  := Trim(ui["hk_rejoin"].Value)
         cfg["hk_overlay"] := Trim(ui["hk_overlay"].Value)
     }
 
     cfg["showCountdownTip"]   := ui["showCountdownTip"].Value ? 1 : 0
 
+    ; Overlay fields
     overlayEnabled   := ui["ov_enabled"].Value ? true : false
     overlayFontSize  := Max(8, ParseInt(ui["ov_fontSize"].Value, overlayFontSize))
     overlayW         := Max(120, ParseInt(ui.Has("ov_width")   ? ui["ov_width"].Value   : overlayW, overlayW))
@@ -1071,20 +866,22 @@ SyncFromGui() {
     overlayCompact   := ui.Has("ov_compact")   ? (ui["ov_compact"].Value ? true : false) : overlayCompact
     overlayShowSteps := ui.Has("ov_showSteps") ? (ui["ov_showSteps"].Value ? true : false) : overlayShowSteps
     overlayShowActive:= ui.Has("ov_showActive")? (ui["ov_showActive"].Value ? true : false) : overlayShowActive
-
-    if (state["m1_running"])
-        M1Box_Update()
 }
 
+; =========================================================
+;                      UI HELPERS
+; =========================================================
 UpdateStatusUI() {
     global ui, state
     if !IsSet(ui) || !ui.Has("status")
         return
     m1 := state["m1_running"] ? "Eggsterminator: Running" : "Eggsterminator: Stopped"
-    ui["status"].Text := m1
+    m2 := state["m2_running"] ? "CBHP: Running" : "CBHP: Stopped"
+    ui["status"].Text := m1 " | " m2
 }
-ForceOverlayRefresh() => UpdateOverlay()
-
+ForceOverlayRefresh() {
+    try UpdateOverlay()
+}
 UpdateCountdown() {
     global ui, cfg, state
     if (!cfg["autoRejoinEnabled"]) {
@@ -1122,9 +919,13 @@ ApplyAutoRejoinTimer() {
     ForceOverlayRefresh()
 }
 
+; =========================================================
+;              STARTERS (NON-BLOCKING start delay)
+; =========================================================
 StartMacro1() {
     SyncFromGui()
-    global state, cfg, _rbxHwnd, _lastFocusTick
+    global state, cfg
+    StopMacro2()
     if (state["m1_running"])
         return
     state["m1_running"] := true
@@ -1132,19 +933,30 @@ StartMacro1() {
     state["m1_stepStart"] := A_TickCount
     state["m1_sub"] := 0
     state["m1_mouseX"] := cfg["m1_LeftX"]
-    state["m1_lastDownRefresh"] := 0
-    _rbxHwnd := FindRobloxHwnd()
-    _lastFocusTick := 0
-    EnsureRobloxFocus(0, false)
     SetTimer(RunMacro1Step, 0)
     SetTimer(RunMacro1Step, cfg["m1_tickMs"])
-    M1Box_Show()
-    M1Path_Init()
-    MouseGetPos(&mx, &my)
-    state["m1_lastX"] := mx
-    state["m1_lastY"] := my
     ForceOverlayRefresh()
 }
+StartMacro2() {
+    SyncFromGui()
+    global state, cfg
+    StopMacro1()
+    if (state["m2_running"])
+        return
+    state["m2_running"] := true
+    state["m2_step"] := -1
+    state["m2_stepStart"] := A_TickCount
+    state["m2_sub"] := 0
+    state["m2_angleDeg"] := 0.0
+    state["m2_lastClickTick"] := 0
+    SetTimer(RunMacro2Step, 0)
+    SetTimer(RunMacro2Step, cfg["m2_tickMs"])
+    ForceOverlayRefresh()
+}
+
+; =========================================================
+;                 EGGSTERMINATOR LOGIC (NON-BLOCKING)
+; =========================================================
 ToggleMacro1() {
     SyncFromGui()
     global state
@@ -1158,16 +970,12 @@ StopMacro1() {
     state["m1_running"] := false
     SetTimer(RunMacro1Step, 0)
     if (state["m1_isDown"]) {
-        LMB_Up()
+        Click "Up"
         state["m1_isDown"] := false
     }
     state["m1_step"] := 0
     state["m1_stepStart"] := 0
     state["m1_sub"] := 0
-    state["m1_lastX"] := 0
-    state["m1_lastY"] := 0
-    state["m1_lastDownRefresh"] := 0
-    M1Box_Hide()
     ForceOverlayRefresh()
 }
 MakeKeyDown(keyName) => "{" keyName " down}"
@@ -1178,18 +986,16 @@ RunMacro1Step() {
     if !state["m1_running"]
         return
 
-    if (state["m1_step"] = 0 || state["m1_step"] = 1 || state["m1_step"] = 2)
-        EnsureRobloxFocus(300, true)
-
+    ; -1: start delay
     if (state["m1_step"] = -1) {
         if (A_TickCount - state["m1_stepStart"] >= cfg["m1_startDelaySec"] * 1000) {
             state["m1_step"] := 0
             state["m1_sub"]  := 0
-            M1Box_Update()
         }
         return
     }
 
+    ; 0: prep sequence
     if (state["m1_step"] = 0) {
         switch state["m1_sub"] {
             case 0:
@@ -1222,36 +1028,21 @@ RunMacro1Step() {
         return
     }
 
+    ; 1: move
     if (state["m1_step"] = 1) {
         if (!state["m1_isDown"]) {
-            LMB_Down()
+            Click "Down"
             state["m1_isDown"] := true
-            state["m1_lastDownRefresh"] := A_TickCount
-        } else {
-            EnsureLMBHeld(400)
         }
-
         elapsed := A_TickCount - state["m1_stepStart"]
         state["m1_mouseX"] += cfg["m1_Speed"]
         if (state["m1_mouseX"] > cfg["m1_RightX"])
             state["m1_mouseX"] := cfg["m1_LeftX"]
         mousePosY := cfg["m1_CenterY"] + Sin(state["m1_mouseX"] / 50) * cfg["m1_Amplitude"]
-
-        nextX := state["m1_mouseX"]
-        nextY := mousePosY
-        MoveMouseAbsolute(nextX, nextY, 0)
-        dx := nextX - state["m1_lastX"]
-        dy := nextY - state["m1_lastY"]
-        if (dx || dy)
-            MoveMouseRelative(dx, dy)
-        state["m1_lastX"] := nextX
-        state["m1_lastY"] := nextY
-
-        M1Path_MoveCursor(nextX, nextY)
-
+        MouseMove(state["m1_mouseX"], mousePosY, 0)
         if (elapsed >= cfg["m1_moveDurationSec"] * 1000) {
             if (state["m1_isDown"]) {
-                LMB_Up()
+                Click "Up"
                 state["m1_isDown"] := false
             }
             state["m1_stepStart"] := A_TickCount
@@ -1261,6 +1052,7 @@ RunMacro1Step() {
         return
     }
 
+    ; 2: Esc -> Reset -> Enter
     if (state["m1_step"] = 2) {
         switch state["m1_sub"] {
             case 0:
@@ -1285,6 +1077,7 @@ RunMacro1Step() {
         return
     }
 
+    ; 3: loop wait
     if (state["m1_step"] = 3) {
         if (A_TickCount - state["m1_stepStart"] >= cfg["m1_loopWaitSec"] * 1000) {
             state["m1_step"] := 0
@@ -1294,21 +1087,150 @@ RunMacro1Step() {
     }
 }
 
+; =========================================================
+;                 CBHP LOGIC (NON-BLOCKING)
+; =========================================================
+ToggleMacro2() {
+    SyncFromGui()
+    global state
+    if (state["m2_running"])
+        StopMacro2()
+    else
+        StartMacro2()
+}
+StopMacro2() {
+    global state
+    state["m2_running"] := false
+    SetTimer(RunMacro2Step, 0)
+    if (state["m2_isDown"]) {
+        Click "Up"
+        state["m2_isDown"] := false
+    }
+    state["m2_step"] := 0
+    state["m2_stepStart"] := 0
+    state["m2_sub"] := 0
+    ForceOverlayRefresh()
+}
+RunMacro2Step() {
+    global state, cfg
+    if !state["m2_running"]
+        return
+
+    ; -1: start delay
+    if (state["m2_step"] = -1) {
+        if (A_TickCount - state["m2_stepStart"] >= cfg["m2_startDelaySec"] * 1000) {
+            state["m2_step"] := 0
+            state["m2_sub"]  := 0
+        }
+        return
+    }
+
+    ; 0: prep key
+    if (state["m2_step"] = 0) {
+        switch state["m2_sub"] {
+            case 0:
+                Send(MakeKeyDown(cfg["m2_prepKey"]))
+                state["m2_stepStart"] := A_TickCount
+                state["m2_sub"] := 1
+            case 1:
+                if (A_TickCount - state["m2_stepStart"] >= Max(0, cfg["m2_prepHoldMs"])) {
+                    Send(MakeKeyUp(cfg["m2_prepKey"]))
+                    state["m2_stepStart"] := A_TickCount
+                    state["m2_sub"] := 0
+                    state["m2_step"] := 1
+                }
+        }
+        return
+    }
+
+    ; 1: circle move
+    if (state["m2_step"] = 1) {
+        elapsed := A_TickCount - state["m2_stepStart"]
+
+        if (!state["m2_isDown"]) {
+            Click "Down"
+            state["m2_isDown"] := true
+        }
+
+        state["m2_angleDeg"] := Mod(state["m2_angleDeg"] + cfg["m2_degPerTick"], 360)
+        rad := state["m2_angleDeg"] * (PI / 180)
+        x := cfg["m2_centerX"] + Round(cfg["m2_radius"] * Cos(rad))
+        y := cfg["m2_centerY"] + Round(cfg["m2_radius"] * Sin(rad))
+        MouseMove x, y, 0
+
+        if (cfg["m2_autoClick"] && cfg["m2_clickEveryMs"] > 0) {
+            if (state["m2_lastClickTick"] = 0 || (A_TickCount - state["m2_lastClickTick"] >= cfg["m2_clickEveryMs"])) {
+                Click
+                state["m2_lastClickTick"] := A_TickCount
+            }
+        }
+
+        if (elapsed >= cfg["m2_moveDurationSec"] * 1000) {
+            if (state["m2_isDown"]) {
+                Click "Up"
+                state["m2_isDown"] := false
+            }
+            state["m2_stepStart"] := A_TickCount
+            state["m2_sub"] := 0
+            state["m2_step"] := 2
+        }
+        return
+    }
+
+    ; 2: Esc -> Reset -> Enter
+    if (state["m2_step"] = 2) {
+        switch state["m2_sub"] {
+            case 0:
+                Send(MakeKeyDown(cfg["m2_keyEsc"])), Send(MakeKeyUp(cfg["m2_keyEsc"]))
+                state["m2_stepStart"] := A_TickCount
+                state["m2_sub"] := 1
+            case 1:
+                if (A_TickCount - state["m2_stepStart"] >= cfg["m2_pause1Sec"] * 1000) {
+                    if (cfg["m2_keyReset"] != "")
+                        Send(cfg["m2_keyReset"])
+                    state["m2_stepStart"] := A_TickCount
+                    state["m2_sub"] := 2
+                }
+            case 2:
+                if (A_TickCount - state["m2_stepStart"] >= cfg["m2_pause2Sec"] * 1000) {
+                    Send(MakeKeyDown(cfg["m2_keyEnter"])), Send(MakeKeyUp(cfg["m2_keyEnter"]))
+                    state["m2_stepStart"] := A_TickCount
+                    state["m2_sub"] := 0
+                    state["m2_step"] := 3
+                }
+        }
+        return
+    }
+
+    ; 3: loop wait
+    if (state["m2_step"] = 3) {
+        if (A_TickCount - state["m2_stepStart"] >= cfg["m2_loopWaitSec"] * 1000) {
+            state["m2_step"] := 0
+            state["m2_stepStart"] := A_TickCount
+            state["m2_sub"] := 0
+        }
+    }
+}
+
+; =========================================================
+;                         REJOIN (auto-resume)
+; =========================================================
 Rejoin() {
     global state, cfg
 
     wasM1 := state["m1_running"]
+    wasM2 := state["m2_running"]
+
     StopMacro1()
+    StopMacro2()
 
     ToolTip("Auto Rejoin: Closing Roblox...")
-    For proc in ["RobloxPlayerBeta.exe", "RobloxCrashHandler.exe", "Roblox.exe"] {
-        RunWait("taskkill /F /IM " proc " /T",, "Hide")
-        Sleep(200)
-    }
+    For proc in ["RobloxPlayerBeta.exe", "RobloxCrashHandler.exe", "Roblox.exe"]
+        Try RunWait("taskkill /F /IM " proc " /T",, "Hide"), Sleep(200)
 
     start := A_TickCount
     Loop {
-        if !ProcessExistName("RobloxPlayerBeta.exe") && !ProcessExistName("Roblox.exe")
+        if !ProcessExist("RobloxPlayerBeta.exe") && !ProcessExist("Roblox.exe")
             break
         if (A_TickCount - start) > cfg["detectTimeoutSec"]*1000
             break
@@ -1318,15 +1240,13 @@ Rejoin() {
     ToolTip("Auto Rejoin: Waiting " cfg["preRelaunchSec"] "s...")
     Sleep(cfg["preRelaunchSec"] * 1000)
 
-    hadBrowser := ProcessExistName(cfg["browserExe"]) ? true : false
-
     ToolTip("Auto Rejoin: Opening server link...")
     Run(cfg["privateServerLink"])
     Sleep(cfg["postLinkWaitSec"] * 1000)
 
     detectStart := A_TickCount
     Loop {
-        if ProcessExistName(cfg["robloxExe"]) {
+        if ProcessExist(cfg["robloxExe"]) {
             Sleep(cfg["browserGraceSec"] * 1000)
             break
         }
@@ -1334,187 +1254,26 @@ Rejoin() {
             break
         Sleep(300)
     }
-
-    try {
-        if (!hadBrowser && ProcessExistName(cfg["browserExe"]))
-            ProcessClose(cfg["browserExe"])
-    } catch {
-    }
+    Try if ProcessExist(cfg["browserExe"])
+        ProcessClose(cfg["browserExe"])
 
     ToolTip()
     state["nextRejoinTick"] := A_TickCount + (cfg["rejoinIntervalMin"] * 60000)
 
     if (wasM1)
         StartMacro1()
+    else if (wasM2)
+        StartMacro2()
     ForceOverlayRefresh()
 }
 
-M1Box_Show() {
-    global cfg
-    if (!cfg["m1_showBox"]) {
-        M1Box_Hide()
-        return
-    }
-    M1Box_Update()
-}
-M1Box_Hide() {
-    global _m1bxT, _m1bxB, _m1bxL, _m1bxR
-    for _, ref in [_m1bxT, _m1bxB, _m1bxL, _m1bxR] {
-        if ref {
-            try {
-                ref.Destroy()
-            } catch {
-            }
-        }
-    }
-    _m1bxT := 0, _m1bxB := 0, _m1bxL := 0, _m1bxR := 0
-    M1Path_Clear()
-}
-M1Box_ShowSide(slot, x, y, w, h, color) {
-    try {
-        if slot {
-            slot.Show("x" x " y" y " w" w " h" h " NoActivate")
-        } else {
-            slot := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20 +E0x08000000")
-            slot.BackColor := color
-            slot.Show("x" x " y" y " w" w " h" h " NoActivate")
-        }
-    } catch {
-    }
-    return slot
-}
-M1Box_Update() {
-    global cfg, _m1bxT, _m1bxB, _m1bxL, _m1bxR
-    if (!cfg["m1_showBox"]) {
-        M1Box_Hide()
-        return
-    }
-    left := cfg["m1_LeftX"]
-    width := Max(1, cfg["m1_RightX"] - cfg["m1_LeftX"])
-    top := cfg["m1_CenterY"] - cfg["m1_Amplitude"]
-    height := Max(1, cfg["m1_Amplitude"] * 2)
-
-    left := Max(0, Min(left, A_ScreenWidth-1))
-    top  := Max(0, Min(top,  A_ScreenHeight-1))
-    width  := Max(1, Min(width,  A_ScreenWidth - left))
-    height := Max(1, Min(height, A_ScreenHeight - top))
-
-    th := Max(1, cfg["m1_boxThickness"])
-    color := cfg["m1_boxColor"]
-
-    _m1bxT := M1Box_ShowSide(_m1bxT, left, top, width, th, color)
-    _m1bxB := M1Box_ShowSide(_m1bxB, left, top + height - th, width, th, color)
-    _m1bxL := M1Box_ShowSide(_m1bxL, left, top, th, height, color)
-    _m1bxR := M1Box_ShowSide(_m1bxR, left + width - th, top, th, height, color)
-
-    if (cfg["m1_showPath"]) {
-        M1Path_Rebuild(left, width, cfg["m1_CenterY"], cfg["m1_Amplitude"])
-    } else {
-        M1Path_Clear()
-        M1Path_Init()
-    }
-}
-
-M1Path_Init() {
-    global _m1CurDot, cfg
-    if _m1CurDot
-        return
-    size := Max(2, cfg["m1_cursorDotSize"])
-    _m1CurDot := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20 +E0x08000000")
-    _m1CurDot.BackColor := cfg["m1_cursorDotColor"]
-    _m1CurDot.Show("x-1000 y-1000 w" size " h" size " NoActivate")
-}
-M1Path_Clear() {
-    global _m1Dots, _m1CurDot
-    for _, g in _m1Dots {
-        try {
-            g.Destroy()
-        } catch {
-        }
-    }
-    _m1Dots := []
-    if _m1CurDot {
-        try {
-            _m1CurDot.Destroy()
-        } catch {
-        }
-        _m1CurDot := 0
-    }
-}
-M1Path_Rebuild(left, width, centerY, amplitude) {
-    global cfg, _m1Dots
-    M1Path_Clear()
-    step := Max(4, cfg["m1_pathStepPx"])
-    dotSize := Max(1, cfg["m1_pathDotSize"])
-    color := cfg["m1_pathColor"]
-
-    xStart := left
-    xEnd := left + width
-    x := xStart
-    while (x <= xEnd) {
-        y := centerY + Sin(x / 50) * amplitude
-        g := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20 +E0x08000000")
-        g.BackColor := color
-        g.Show("x" Round(x - dotSize/2) " y" Round(y - dotSize/2) " w" dotSize " h" dotSize " NoActivate")
-        _m1Dots.Push(g)
-        x += step
-    }
-    M1Path_Init()
-}
-M1Path_MoveCursor(x, y) {
-    global cfg, _m1CurDot
-    if !_m1CurDot
-        return
-    curSize := Max(2, cfg["m1_cursorDotSize"])
-    try {
-        _m1CurDot.Show("x" Round(x - curSize/2) " y" Round(y - curSize/2) " w" curSize " h" curSize " NoActivate")
-    } catch {
-    }
-}
-
-ProcessExistName(name) {
-    try {
-        for _ in ComObjGet("winmgmts:").ExecQuery("Select * from Win32_Process Where Name='" name "'")
-            return true
-    } catch {
-    }
+; =========================================================
+;                        HELPERS
+; =========================================================
+ProcessExist(name) {
+    for _ in ComObjGet("winmgmts:").ExecQuery("Select * from Win32_Process Where Name='" name "'")
+        return true
     return false
-}
-MoveMouseAbsolute(x, y, speed := 0) {
-    try {
-        MouseMove x, y, speed
-    } catch {
-    }
-    try {
-        DllCall("SetCursorPos", "int", x, "int", y)
-    } catch {
-    }
-}
-MoveMouseRelative(dx, dy) {
-    try {
-        DllCall("mouse_event", "UInt", 0x0001, "Int", dx, "Int", dy, "UInt", 0, "UPtr", 0)
-    } catch {
-    }
-}
-LMB_Down() {
-    try {
-        DllCall("mouse_event", "UInt", 0x0002, "Int", 0, "Int", 0, "UInt", 0, "UPtr", 0)
-    } catch {
-    }
-}
-LMB_Up() {
-    try {
-        DllCall("mouse_event", "UInt", 0x0004, "Int", 0, "Int", 0, "UInt", 0, "UPtr", 0)
-    } catch {
-    }
-}
-EnsureLMBHeld(refreshMs := 400) {
-    global state
-    if (!GetKeyState("LButton","P") || (A_TickCount - state["m1_lastDownRefresh"] >= refreshMs)) {
-        LMB_Down()
-        state["m1_isDown"] := true
-        state["m1_lastDownRefresh"] := A_TickCount
-    }
 }
 StepNameM1(step) {
     global cfg
@@ -1527,19 +1286,55 @@ StepNameM1(step) {
         default: return "--"
     }
 }
+StepNameM2(step) {
+    global cfg
+    switch step {
+        case -1: return "Start Delay"
+        case 0: return "Prep (" cfg["m2_prepKey"] ")"
+        case 1: return "Circle Move"
+        case 2: return "Esc → Reset → Enter"
+        case 3: return "Wait"
+        default: return "--"
+    }
+}
 
+; =========================================================
+;                 RESET TABS TO DEFAULTS
+; =========================================================
 ResetTabDefaults(tabName) {
     global cfg, DEFAULT, ui
     switch tabName {
         case "General":
-            for k in ["privateServerLink","robloxExe","browserExe","rejoinIntervalMin","preRelaunchSec","postLinkWaitSec","detectTimeoutSec","browserGraceSec","autoRejoinEnabled"]
-                cfg[k] := DEFAULT[k]
+            cfg["privateServerLink"] := DEFAULT["privateServerLink"]
+            cfg["robloxExe"]         := DEFAULT["robloxExe"]
+            cfg["browserExe"]        := DEFAULT["browserExe"]
+            cfg["rejoinIntervalMin"] := DEFAULT["rejoinIntervalMin"]
+            cfg["preRelaunchSec"]    := DEFAULT["preRelaunchSec"]
+            cfg["postLinkWaitSec"]   := DEFAULT["postLinkWaitSec"]
+            cfg["detectTimeoutSec"]  := DEFAULT["detectTimeoutSec"]
+            cfg["browserGraceSec"]   := DEFAULT["browserGraceSec"]
+            cfg["autoRejoinEnabled"] := DEFAULT["autoRejoinEnabled"]
+
         case "Eggsterminator":
-            for k in ["m1_startDelaySec","m1_tickMs","m1_moveDurationSec","m1_pause1Sec","m1_pause2Sec","m1_loopWaitSec","m1_LeftX","m1_RightX","m1_CenterY","m1_Amplitude","m1_Speed","m1_key1","m1_key1HoldMs","m1_key2","m1_key2HoldMs","m1_postKey2DelayMs","m1_afterPrepKey","m1_keyEsc","m1_keyReset","m1_keyEnter","m1_showBox","m1_boxThickness","m1_boxColor","m1_showPath","m1_pathColor","m1_pathStepPx","m1_pathDotSize","m1_cursorDotColor","m1_cursorDotSize"]
+            for k in ["m1_startDelaySec","m1_tickMs","m1_moveDurationSec","m1_pause1Sec","m1_pause2Sec",
+                      "m1_loopWaitSec","m1_LeftX","m1_RightX","m1_CenterY","m1_Amplitude","m1_Speed",
+                      "m1_key1","m1_key1HoldMs","m1_key2","m1_key2HoldMs","m1_postKey2DelayMs",
+                      "m1_afterPrepKey","m1_keyEsc","m1_keyReset","m1_keyEnter"]
                 cfg[k] := DEFAULT[k]
+
+        case "CBHP":
+            for k in ["m2_startDelaySec","m2_tickMs","m2_moveDurationSec","m2_loopWaitSec",
+                      "m2_centerX","m2_centerY","m2_radius","m2_degPerTick","m2_clickEveryMs","m2_autoClick",
+                      "m2_prepKey","m2_prepHoldMs","m2_pause1Sec","m2_pause2Sec","m2_keyEsc","m2_keyReset","m2_keyEnter"]
+                cfg[k] := DEFAULT[k]
+
         case "Options":
-            for k in ["showCountdownTip","hk_m1","hk_rejoin","hk_overlay"]
-                cfg[k] := DEFAULT[k]
+            cfg["showCountdownTip"] := DEFAULT["showCountdownTip"]
+            cfg["hk_m1"]      := DEFAULT["hk_m1"]
+            cfg["hk_m2"]      := DEFAULT["hk_m2"]
+            cfg["hk_rejoin"]  := DEFAULT["hk_rejoin"]
+            cfg["hk_overlay"] := DEFAULT["hk_overlay"]
+
         case "Overlay":
             global overlayEnabled, overlayFontSize, overlayTextColor, overlayBackColor, overlayOpacity
             global overlayShowSteps, overlayShowActive, overlayW, overlayH, overlayPadding, overlayRadius, overlayCompact, overlayTheme
@@ -1547,12 +1342,12 @@ ResetTabDefaults(tabName) {
             overlayFontSize  := 12
             overlayTextColor := "Lime"
             overlayBackColor := "Black"
-            overlayOpacity   := 200
+            overlayOpacity   := 190
             overlayShowSteps := true
             overlayShowActive:= true
-            overlayW := 560
-            overlayH := 74
-            overlayPadding := 12
+            overlayW := 520
+            overlayH := 72
+            overlayPadding := 10
             overlayRadius := 14
             overlayCompact := false
             overlayTheme := 0
@@ -1563,12 +1358,15 @@ ResetTabDefaults(tabName) {
     RefreshGuiFromCfg(ui, cfg)
     if (tabName = "Options")
         ApplyHotkeys()
-    ToolTip(tabName " reset"), SetTimer(() => ToolTip(), -600)
+    ToolTip(tabName " reset to defaults"), Sleep(600), ToolTip()
 }
 
+; =========================================================
+;                 GLOBAL STOP HELPER
+; =========================================================
 StopAll() {
     StopMacro1()
-    M1Box_Hide()
+    StopMacro2()
     ToolTip("Stopped")
     SetTimer(() => ToolTip(), -600)
 }
